@@ -138,19 +138,26 @@ fn process_line(
     let mut i = 0;
     let mut last_was_newline = false;
 
+    let is_nonblank = line.len() > 1 || (line.len() == 1 && line[0] != b'\n');
+
+    if opts.squeeze_blank.active && line == b"\n" {
+        if *prev_blank {
+            return;
+        }
+        *prev_blank = true;
+    } else if line.last() == Some(&b'\n') {
+        *prev_blank = false;
+    }
+
+    if (opts.number_lines_nonblank.active && is_nonblank) || opts.number_lines.active {
+        write_line_number(out_buf, *line_number);
+        *line_number += 1;
+    }
+
     while i < line.len() {
         let b = line[i];
         last_was_newline = b == b'\n';
         let mut write_byte = true;
-
-        if opts.squeeze_blank.active && b == b'\n' && line.len() == 1 {
-            if *prev_blank {
-                return;
-            }
-            *prev_blank = true;
-        } else if b == b'\n' {
-            *prev_blank = false;
-        }
 
         if opts.show_nonprint.active && b != b'\n' && b != b'\t' && (b < 32 || b == 127) {
             out_buf.push(b'^');
@@ -174,31 +181,53 @@ fn process_line(
         out_buf.pop();
         out_buf.extend_from_slice(b"$\n");
     }
-
-    let is_nonblank = out_buf.len() > 1 || (out_buf.len() == 1 && out_buf[0] != b'\n');
-    if (opts.number_lines_nonblank.active && is_nonblank) || opts.number_lines.active {
-        let ln_bytes = line_number_bytes(*line_number);
-        out_buf.splice(0..0, ln_bytes.iter().cloned());
-        out_buf.insert(ln_bytes.len(), b'\t');
-        *line_number += 1;
-    }
 }
 
 #[inline(always)]
-fn line_number_bytes(mut n: u64) -> [u8; 6] {
-    let mut buf = [b' '; 6];
-    let mut i = 5;
-    if n == 0 {
-        buf[i] = b'0';
-    } else {
-        while n > 0 && i < 6 {
-            buf[i] = b'0' + (n % 10) as u8;
-            n /= 10;
-            if i == 0 {
-                break;
+fn write_line_number(out_buf: &mut Vec<u8>, n: u64) {
+    if n <= 999_999 {
+        let mut i = 5;
+        let mut tmp = n;
+        let mut buf = [b' '; 6];
+
+        if tmp == 0 {
+            buf[i] = b'0';
+        } else {
+            while tmp > 0 {
+                buf[i] = b'0' + (tmp % 10) as u8;
+                tmp /= 10;
+                if i == 0 {
+                    break;
+                }
+                i -= 1;
             }
-            i -= 1;
+        }
+
+        out_buf.extend_from_slice(&buf);
+    } else {
+        let mut tmp = n;
+        let mut digits = 0;
+
+        if tmp == 0 {
+            digits = 1;
+        } else {
+            let mut t = tmp;
+            while t > 0 {
+                digits += 1;
+                t /= 10;
+            }
+        }
+
+        let start = out_buf.len();
+        out_buf.resize(start + digits, 0);
+        let mut pos = start + digits;
+
+        while tmp > 0 {
+            pos -= 1;
+            out_buf[pos] = b'0' + (tmp % 10) as u8;
+            tmp /= 10;
         }
     }
-    buf
+
+    out_buf.push(b'\t');
 }
